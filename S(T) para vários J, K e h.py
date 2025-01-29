@@ -14,9 +14,9 @@ def S(T, J, K, h):
 T_values = np.linspace(-1, 10, 10000)
 
 # Definir os valores para h, K e J que serão usados nas plotagens
-h_values = [-2, 1, 2]
+h_values = [-4, 1, 4]
 K_values = [1]
-J_values = [-2, 1, 2]
+J_values = [-4, 1, 4]
 
 # Criar o gráfico
 plt.figure(figsize=(20, 10))

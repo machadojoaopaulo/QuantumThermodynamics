@@ -9,7 +9,7 @@ BOLTZMANN=1 # boltzmann constant -> Kb
 ANTIFERROMAGNETIC_EXCHANGE_COUPLING=20 #J>=0
 ENTROPY=1 #S tem que ser constante pq o processo é adibático
 TEMPERATURE_INITIAL_GUESS = 1 # melhorando o chute inicial para um valor maior
-MAGNETIC_FIELD_INITIAL = 1 # O valor inicial do campo magnético
+MAGNETIC_FIELD_INITIAL = (-4) # O valor inicial do campo magnético
 MAGNETIC_FIELD_FINAL = 4 #O valor final do campo magnético
 
 def log_detailed_calculation(magnetic_field):
