@@ -1,3 +1,9 @@
 /.idea
 venv/
 .venv/
+__pycache__/
+*.pyc
+*.npz
+relatorio_*.html
+cosseno_angle.txt
+events_Z.txt
