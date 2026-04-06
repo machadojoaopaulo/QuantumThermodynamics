@@ -4,6 +4,7 @@ venv/
 __pycache__/
 *.pyc
 *.npz
+!regions_cache/*.npz
 relatorio_*.html
 cosseno_angle.txt
 events_Z.txt
