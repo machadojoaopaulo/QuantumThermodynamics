@@ -329,21 +329,36 @@ def _modo_operacao(Win, Wout, Qin, Qout):
     Convenção (do ponto de vista do sistema):
       Win  = E2 − E1  (trabalho na adiabática 1→2)
       Wout = E4 − E3  (trabalho na adiabática 3→4)
-      Qin  = E3 − E2  (calor trocado na isocórica quente)
-      Qout = E1 − E4  (calor trocado na isocórica fria)
+      Qin  = E3 − E2  (calor na isocórica em hf — banho em Th)
+      Qout = E1 − E4  (calor na isocórica em hi — banho em Tc)
       W    = Win + Wout  (W < 0 → sistema produz trabalho)
 
-    Modos:
-      Motor       : W < 0, Qin > 0, Qout < 0  (converte calor em trabalho)
-      Refrigerador: W > 0, Qin < 0, Qout > 0  (bombeia calor frio → quente)
+    A conservação de energia exige W + Qin + Qout = 0 (ciclo fechado).
+    Das 8 combinações de sinais possíveis, apenas 6 são fisicamente realizáveis.
+
+    Modos com Th > Tc (regime padrão):
+      Motor       : W < 0, Qin > 0, Qout < 0  (absorve em Th, libera em Tc)
+      Refrigerador: W > 0, Qin < 0, Qout > 0  (bombeia calor Tc → Th)
       Acelerador  : W < 0, Qin > 0, Qout > 0  (absorve calor dos 2 banhos)
       Aquecedor   : W > 0, Qin < 0, Qout < 0  (deposita calor nos 2 banhos)
+
+    Modos com Tc > Th (regime invertido — papéis dos banhos trocados):
+      Motor       : W < 0, Qin < 0, Qout > 0  (absorve em Tc, libera em Th)
+      Refrigerador: W > 0, Qin > 0, Qout < 0  (bombeia calor Th → Tc)
+
+    Nota: as 6 combinações acima cobrem todos os casos realizáveis.
+    As 2 combinações restantes (W<0,Qin<0,Qout<0) e (W>0,Qin>0,Qout>0)
+    violam a conservação de energia e não ocorrem numericamente.
     """
     W = Win + Wout
     if   W < 0 and Qin > 0 and Qout < 0:
         return 'Motor'
+    elif W < 0 and Qin < 0 and Qout > 0:
+        return 'Motor'          # regime Tc > Th (invertido)
     elif W > 0 and Qin < 0 and Qout > 0:
         return 'Refrigerador'
+    elif W > 0 and Qin > 0 and Qout < 0:
+        return 'Refrigerador'   # regime Tc > Th (invertido)
     elif W < 0 and Qin > 0 and Qout > 0:
         return 'Acelerador'
     elif W > 0 and Qin < 0 and Qout < 0:
@@ -394,6 +409,276 @@ def eficiencia_quantica(J, hi, hf, Tc, Th, PASSOS=100):
     eta  = abs(W) / abs(Qin) if Th >= Tc else abs(W) / abs(Qout)
     return dict(Win=Win, Wout=Wout, Qin=Qin, Qout=Qout, W=W, eta=eta,
                 modo=_modo_operacao(Win, Wout, Qin, Qout))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ENERGIA POR NÍVEL  (contribuição de cada autovalor em cada processo)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _energia_nivel(pops, h, J):
+    """
+    Energia individual de cada nível: U_n = E_n · p_n
+
+    Níveis (ordem de _pops_termicas):
+        pops[0] → E =  0      (estado singleto)
+        pops[1] → E = −2h
+        pops[2] → E = +2h
+        pops[3] → E = −8J
+    """
+    return np.array([
+        0.0         * pops[0],
+        (-2*h)      * pops[1],
+        (+2*h)      * pops[2],
+        (-8*J)      * pops[3],
+    ])
+
+
+def _empacota_niveis(dU):
+    """Empacota array de 4 contribuições num dict com chaves descritivas."""
+    return {
+        '+2h': float(dU[2]),
+        '0'  : float(dU[0]),
+        '-2h': float(dU[1]),
+        '-8J': float(dU[3]),
+    }
+
+
+def energias_por_nivel_classico(J, hi, hf, Tc, Th, PASSOS=100):
+    """
+    Energia trocada por cada nível de autovalor no ciclo de Otto CLÁSSICO.
+
+    Decomposição:
+      • Adiabáticas (1→2, 3→4) — trabalho por nível:
+          ΔW_n = E_n_final · p_n_final − E_n_inicial · p_n_inicial
+      • Isocóricas (2→3, 4→1) — calor por nível:
+          ΔQ_n = E_n · (p_n_final − p_n_inicial)
+
+    Retorna
+    -------
+    dict com chaves 'W12', 'Q23', 'W34', 'Q41' e 'totais'.
+    Cada entrada é um dict com chaves '+2h', '0', '-2h', '-8J' e 'total'.
+    """
+    _, _, Tc_add, Th_add = ciclo_classico(J, hi, hf, Tc, Th, PASSOS)
+
+    p1  = _pops_termicas(J, hi,  Tc)
+    p2C = _pops_termicas(J, hf,  Tc_add)
+    p3  = _pops_termicas(J, hf,  Th)
+    p4C = _pops_termicas(J, hi,  Th_add)
+
+    # ── Trabalho nas adiabáticas: ΔW_n = E_n_f·p_n_f − E_n_i·p_n_i ─────────
+    W12 = _energia_nivel(p2C, hf, J) - _energia_nivel(p1,  hi, J)
+    W34 = _energia_nivel(p4C, hi, J) - _energia_nivel(p3,  hf, J)
+
+    # ── Calor nas isocóricas: ΔQ_n = E_n · Δp_n ──────────────────────────────
+    # isocórica 2→3: h = hf fixo
+    E_at_hf = np.array([0.0, -2*hf, +2*hf, -8*J])
+    Q23 = E_at_hf * (p3 - p2C)
+
+    # isocórica 4→1: h = hi fixo
+    E_at_hi = np.array([0.0, -2*hi, +2*hi, -8*J])
+    Q41 = E_at_hi * (p1 - p4C)
+
+    def _dict(dU):
+        d = _empacota_niveis(dU)
+        d['total'] = sum(d.values())
+        return d
+
+    return dict(
+        W12=_dict(W12), Q23=_dict(Q23),
+        W34=_dict(W34), Q41=_dict(Q41),
+        Tc_add=Tc_add,  Th_add=Th_add,
+    )
+
+
+def energias_por_nivel_quantico(J, hi, hf, Tc, Th):
+    """
+    Energia trocada por cada nível de autovalor no ciclo de Otto QUÂNTICO.
+
+    Nas adiabáticas quânticas as populações ficam CONGELADAS (p = p_i para todo h),
+    por isso o trabalho por nível se reduz a:
+        ΔW_n = p_n_frozen · (E_n_final − E_n_inicial)
+
+    Níveis com E independente de h (E=0 e E=−8J) não fazem trabalho adiabático.
+
+    Retorna
+    -------
+    dict com chaves 'W12', 'Q23', 'W34', 'Q41'.
+    Cada entrada é um dict com chaves '+2h', '0', '-2h', '-8J' e 'total'.
+    """
+    p1 = _pops_termicas(J, hi, Tc)   # estado #1 — equilíbrio real
+    p3 = _pops_termicas(J, hf, Th)   # estado #3 — equilíbrio real
+    # estado #2: pops congeladas de #1 em h=hf
+    # estado #4: pops congeladas de #3 em h=hi
+
+    # ── Trabalho adiabático 1→2: p = p1 (frozen), E_n muda de hi→hf ─────────
+    # ΔW_n = p1_n · (E_n(hf) − E_n(hi))
+    # E(+2h): Δ = +2(hf−hi);  E(-2h): Δ = -2(hf−hi);  E=0,E=-8J: Δ = 0
+    delta_E_12 = np.array([0.0, -2*(hf-hi), +2*(hf-hi), 0.0])
+    W12 = p1 * delta_E_12
+
+    # ── Calor isocórico 2→3: h = hf fixo, pops vão de p1 (frozen) → p3 ─────
+    E_at_hf = np.array([0.0, -2*hf, +2*hf, -8*J])
+    Q23 = E_at_hf * (p3 - p1)
+
+    # ── Trabalho adiabático 3→4: p = p3 (frozen), E_n muda de hf→hi ─────────
+    delta_E_34 = np.array([0.0, -2*(hi-hf), +2*(hi-hf), 0.0])
+    W34 = p3 * delta_E_34
+
+    # ── Calor isocórico 4→1: h = hi fixo, pops vão de p3 (frozen) → p1 ─────
+    E_at_hi = np.array([0.0, -2*hi, +2*hi, -8*J])
+    Q41 = E_at_hi * (p1 - p3)
+
+    def _dict(dU):
+        d = _empacota_niveis(dU)
+        d['total'] = sum(d.values())
+        return d
+
+    return dict(W12=_dict(W12), Q23=_dict(Q23), W34=_dict(W34), Q41=_dict(Q41))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  EFICIÊNCIA POR NÍVEL  (framework do artigo — eq. 4)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def eficiencia_por_nivel(J, hi, hf, Tc, Th, PASSOS=100):
+    """
+    Decompõe a eficiência do ciclo de Otto segundo o framework de
+    níveis 'working' vs 'idle' (ver eq. 4 do artigo de referência).
+
+    Classificação dos níveis
+    ────────────────────────
+    • Working  (n ∈ W)  :  E_n varia com h  →  E = ±2h
+    • Idle     (n ∉ W)  :  E_n independe de h  →  E = −8J  e  E = 0
+
+    Ciclo QUÂNTICO — resultado exato (eq. 4)
+    ──────────────────────────────────────────
+    Para o ciclo quântico, os níveis idle NÃO fazem trabalho (W_{idle}^Q = 0),
+    portanto toda a sua contribuição se manifesta apenas como calor trocado
+    nos processos isocóricos. Definindo:
+
+        η₀ = 1 − hᵢ/h_f      ← eficiência dos níveis working sozinhos
+                                  (análogo à eficiência de Carnot para o Otto quântico)
+
+    A eq. (4) do artigo afirma que a eficiência total é:
+
+        η^Q / η₀  =  1 − q^{hot}_{idle} / Q^{hot}_{total}        (eq. 4)
+
+    onde  q^{hot}_{idle} = Q_in_{−8J}  é o calor que o nível idle troca
+    com o banho quente. O resultado tem uma interpretação física direta:
+
+        • q^{hot}_{idle} > 0  →  idle absorve calor do banho quente
+                                   →  menos calor chega aos níveis working
+                                   →  η^Q < η₀  (degradação)
+
+        • q^{hot}_{idle} < 0  →  idle despeja calor no banho quente
+                                   →  banho quente "recebe de volta" calor
+                                   →  η^Q > η₀  (enhancement)
+
+    Ciclo CLÁSSICO — quebra da eq. (4)
+    ────────────────────────────────────
+    No ciclo clássico, as adiabáticas re-equilibram as populações, de modo
+    que o nível −8J TAMBÉM faz trabalho (W_{−8J}^C ≠ 0). A eq. (4) deixa
+    de ser exata. Definimos o desvio:
+
+        δ_C  =  η^C/η₀  −  (1 − Q_in_{−8J}^C / Q_in^C)
+
+    Este desvio quantifica o quanto o ciclo clássico quebra a relação do
+    artigo. Fisicamente, δ_C é não-nulo porque no clássico o nível −8J
+    contribui tanto via calor (como no quântico) quanto via trabalho
+    (exclusivo do ciclo clássico).
+
+    Convenção de Q_in / Q_out
+    ──────────────────────────
+        Th ≥ Tc  →  Q_in = Q23  (banho em Th é o quente)
+        Tc  > Th →  Q_in = Q41  (banho em Tc é o quente — motor invertido)
+
+    Parâmetros
+    ──────────
+    J, hi, hf, Tc, Th : parâmetros do ciclo (ver ciclo_classico / ciclo_quantico)
+    PASSOS            : pontos nas adiabáticas clássicas (padrão 100)
+
+    Retorna
+    ───────
+    dict com:
+        eta0        : eficiência de referência  η₀ = 1 − hi/hf
+        eta_Carnot  : η_Carnot = 1 − min(Tc,Th)/max(Tc,Th)
+
+        # Ciclo quântico
+        eta_Q       : eficiência total quântica
+        ratio_Q     : η^Q / η₀
+        x_Q         : 1 − Q_in_{−8J}^Q / Q_in^Q  (deve ser = ratio_Q, verifica eq. 4)
+        desvio_Q    : ratio_Q − x_Q               (deve ser ≈ 0 numericamente)
+        Q_idle_Q    : Q_in_{−8J}^Q  (calor do nível idle no banho quente)
+        Q_in_Q      : Q_in total quântico
+        modo_Q      : modo de operação (Motor, Refrigerador, ...)
+
+        # Ciclo clássico
+        eta_C       : eficiência total clássica
+        ratio_C     : η^C / η₀
+        x_C         : 1 − Q_in_{−8J}^C / Q_in^C  (análogo à eq. 4, mas ≠ ratio_C)
+        desvio_C    : ratio_C − x_C               (quebra da eq. 4 no clássico)
+        Q_idle_C    : Q_in_{−8J}^C
+        Q_in_C      : Q_in total clássico
+        W_idle_C    : trabalho total do nível −8J no clássico (W12_{-8J} + W34_{-8J})
+        modo_C      : modo de operação
+    """
+    eta0       = 1.0 - hi / hf
+    eta_Carnot = 1.0 - min(Tc, Th) / max(Tc, Th)
+
+    # ── Ciclo quântico ────────────────────────────────────────────────────────
+    # A eq. (4) do artigo é derivada com Q_in = Q23 e η₀ = 1 − hi/hf.
+    # Isso é válido SEMPRE (não apenas para Th ≥ Tc), pois a identidade é puramente
+    # algébrica: −W_{±2h} = η₀ · Q23_{±2h}  (pois E_{±2h} ∝ h, populações congeladas).
+    #
+    # Portanto usamos SEMPRE proc_in = 'Q23' para a verificação da eq. (4), mesmo
+    # quando Tc > Th (onde Q23 < 0 fora do motor). O sinal de η_signed e x_Q
+    # fica consistente, e desvio_Q ≈ 0 para qualquer ponto do espaço de parâmetros.
+    #
+    # Prova: W_{idle}^Q = 0 → W_total^Q = W_{±2h}^Q
+    #        Q23_{±2h} = hf·(M1 − M3)   e   −W_{±2h} = (hf−hi)·(M1−M3)
+    #        ∴ −W_{±2h} / Q23_{±2h} = (hf−hi)/hf = η₀   (independente do sinal de M1−M3)
+    #        ∴ η^Q_signed = −W/Q23 = η₀·(1 − Q23_{-8J}/Q23_total) = η₀·x_Q   (exato)
+    nQ = energias_por_nivel_quantico(J, hi, hf, Tc, Th)
+    efQ = eficiencia_quantica(J, hi, hf, Tc, Th)
+
+    Q_in_Q    = nQ['Q23']['total']
+    Q_idle_Q  = nQ['Q23']['-8J']
+    W_total_Q = nQ['W12']['total'] + nQ['W34']['total']
+
+    # Eficiência assinada: η_signed = −W/Q23  (pode ser < 0 fora do Motor)
+    eta_Q_signed = (-W_total_Q / Q_in_Q) if Q_in_Q != 0 else np.nan
+    x_Q          = (1.0 - Q_idle_Q / Q_in_Q) if Q_in_Q != 0 else np.nan
+    ratio_Q      = (eta_Q_signed / eta0)       if eta0   != 0 else np.nan
+    desvio_Q     = ratio_Q - x_Q   # deve ser ~0 para qualquer (Tc, Th)
+
+    # ── Ciclo clássico ────────────────────────────────────────────────────────
+    # Idem: usamos sempre Q23 e η₀ = 1 − hi/hf como referência.
+    # A eq. (4) NÃO é exata no clássico porque W_{-8J}^C ≠ 0.
+    # O desvio δ_C = ratio_C − x_C captura essa quebra.
+    nC  = energias_por_nivel_classico(J, hi, hf, Tc, Th, PASSOS)
+    efC = eficiencia_classica(J, hi, hf, Tc, Th, PASSOS)
+
+    Q_in_C    = nC['Q23']['total']
+    Q_idle_C  = nC['Q23']['-8J']
+    W_total_C = nC['W12']['total'] + nC['W34']['total']
+    W_idle_C  = nC['W12']['-8J'] + nC['W34']['-8J']
+
+    eta_C_signed = (-W_total_C / Q_in_C) if Q_in_C != 0 else np.nan
+    x_C          = (1.0 - Q_idle_C / Q_in_C) if Q_in_C != 0 else np.nan
+    ratio_C      = (eta_C_signed / eta0)       if eta0   != 0 else np.nan
+    desvio_C     = ratio_C - x_C
+
+    return dict(
+        eta0=eta0, eta_Carnot=eta_Carnot,
+        # Quântico
+        eta_Q=efQ['eta'], eta_Q_signed=eta_Q_signed,
+        ratio_Q=ratio_Q, x_Q=x_Q, desvio_Q=desvio_Q,
+        Q_idle_Q=Q_idle_Q, Q_in_Q=Q_in_Q, modo_Q=efQ['modo'],
+        # Clássico
+        eta_C=efC['eta'], eta_C_signed=eta_C_signed,
+        ratio_C=ratio_C, x_C=x_C, desvio_C=desvio_C,
+        Q_idle_C=Q_idle_C, Q_in_C=Q_in_C, W_idle_C=W_idle_C, modo_C=efC['modo'],
+    )
 
 
 def resumo_ciclo(J, hi, hf, Tc, Th, PASSOS=100):

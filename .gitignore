@@ -8,3 +8,7 @@ __pycache__/
 relatorio_*.html
 cosseno_angle.txt
 events_Z.txt
+
+# Arquivos grandes / pessoais
+*.m4a
+dissertation/

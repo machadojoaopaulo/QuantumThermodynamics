@@ -15,10 +15,31 @@ from plotly.subplots import make_subplots
 from dash import Dash, dcc, html, Input, Output
 
 from thermodynamics_functions import (
-    magnetizacao, entropia,
+    Z, energia_livre, energia_media, entropia,
+    magnetizacao, susceptibilidade, calor_especifico,
     ciclo_classico, ciclo_Q,
     eficiencia_classica, eficiencia_quantica,
 )
+
+OBSERVABLES = {
+    'M': (magnetizacao,     'M', 'M(J,h,T)'),
+    'S': (entropia,         'S', 'S(J,h,T)'),
+    'U': (energia_media,    'U', 'U(J,h,T)'),
+    'F': (energia_livre,    'F', 'F(J,h,T)'),
+    'Z': (Z,                'Z', 'Z(J,h,T)'),
+    'C': (calor_especifico, 'C', 'C(J,h,T)'),
+    'X': (susceptibilidade, 'χ', 'χ(J,h,T)'),
+}
+
+OBS_OPTIONS = [
+    {'label': 'M — Magnetização',               'value': 'M'},
+    {'label': 'S — Entropia',                   'value': 'S'},
+    {'label': 'U — Energia Interna',            'value': 'U'},
+    {'label': 'F — Energia Livre de Helmholtz', 'value': 'F'},
+    {'label': 'Z — Função de Partição',         'value': 'Z'},
+    {'label': 'C — Calor Específico',           'value': 'C'},
+    {'label': 'χ — Susceptibilidade',           'value': 'X'},
+]
 
 # ─────────────────────────────────────────────────────────────────────────────
 app = Dash(
@@ -110,6 +131,7 @@ def _add_panel(fig, func, fname, flabel, cb_x,
                     x=[v['h']], y=[v['T']], z=[Qv],
                     mode='markers+text', text=[v['label']], textposition='top center',
                     marker=dict(size=5, color='black'),
+                    textfont=dict(color='black', size=13),
                     name='Estados Termod.', legendgroup='thermo_pts',
                     showlegend=(k == 1 and first),
                 ), row=row, col=col)
@@ -155,23 +177,28 @@ def _add_panel(fig, func, fname, flabel, cb_x,
                 mode='markers+text', text=[lbl], textposition='top center',
                 marker=dict(size=7, color=fc, symbol='square',
                             line=dict(color='cyan', width=2)),
+                textfont=dict(color='black', size=13),
                 name='Estados QT', legendgroup='qt_pts',
                 showlegend=(lbl == '1Q' and first),
             ), row=row, col=col)
 
 
-def build_figure(J, hi, hf, Ta, Tb, Tmin, Tmax, N, arrow_sz, show_thermo, show_qt):
+def build_figure(J, hi, hf, Ta, Tb, Tmin, Tmax, N, arrow_sz, show_thermo, show_qt,
+                 obs_left='M', obs_right='S'):
+    func_l, fname_l, flabel_l = OBSERVABLES.get(obs_left,  OBSERVABLES['M'])
+    func_r, fname_r, flabel_r = OBSERVABLES.get(obs_right, OBSERVABLES['S'])
+
     fig = make_subplots(
         rows=1, cols=2,
         specs=[[{'type': 'scene'}, {'type': 'scene'}]],
-        subplot_titles=['Magnetização  M(J,h,T)', 'Entropia  S(J,h,T)'],
+        subplot_titles=[flabel_l, flabel_r],
         horizontal_spacing=0.02,
     )
     cam = dict(eye=dict(x=0.9, y=-1.4, z=0.75))
 
     for func, fname, flabel, cb_x, col in [
-        (magnetizacao, 'M', 'M(J,h,T)', 0.46, 1),
-        (entropia,     'S', 'S(J,h,T)', 1.01, 2),
+        (func_l, fname_l, flabel_l, 0.46, 1),
+        (func_r, fname_r, flabel_r, 1.01, 2),
     ]:
         _add_panel(fig, func, fname, flabel, cb_x,
                    J, hi, hf, Ta, Tb, Tmin, Tmax, N,
@@ -186,9 +213,9 @@ def build_figure(J, hi, hf, Ta, Tb, Tmin, Tmax, N, arrow_sz, show_thermo, show_q
                   f'Tₐ={Ta:.2f}, T_b={Tb:.2f} | limiar={lim:.2f} → {reg}'),
             x=0.5, font=dict(size=12, color='white'),
         ),
-        scene =dict(xaxis_title='h', yaxis_title='T', zaxis_title='M',
+        scene =dict(xaxis_title='h', yaxis_title='T', zaxis_title=fname_l,
                     camera=cam, bgcolor='rgb(10,10,20)', aspectmode='auto'),
-        scene2=dict(xaxis_title='h', yaxis_title='T', zaxis_title='S',
+        scene2=dict(xaxis_title='h', yaxis_title='T', zaxis_title=fname_r,
                     camera=cam, bgcolor='rgb(10,10,20)', aspectmode='auto'),
         legend=dict(
             x=1.06, xanchor='left', y=0.95, groupclick='togglegroup',
@@ -218,35 +245,42 @@ _COR_MODO = {
 }
 
 
-def _tabela_html(titulo, res):
+def _tabela_componente(titulo, res):
     bg, fg = _COR_MODO.get(res['modo'], _COR_MODO['Indefinido'])
-    eta    = f"{res['eta']:.4f}" if res.get('eta') is not None else '—'
+    eta = f"{res['eta']:.4f}" if res.get('eta') is not None else '—'
     linhas = [
-        ('η / COP',          f'<b>{eta}</b>'),
-        ('Q_b  (isoc. h_f)', f"{res['Qin']:+.5f}"),
-        ('Q_a  (isoc. h_i)', f"{res['Qout']:+.5f}"),
-        ('W₁₂  (adiab.)',    f"{res['Win']:+.5f}"),
-        ('W₃₄  (adiab.)',    f"{res['Wout']:+.5f}"),
-        ('<b>W_tot</b>',     f"<b>{res['W']:+.5f}</b>"),
+        ('η / COP',          eta,                        True),
+        ('Q_b  (isoc. hf)',  f"{res['Qin']:+.5f}",      False),
+        ('Q_a  (isoc. hi)',  f"{res['Qout']:+.5f}",     False),
+        ('W₁₂  (adiab.)',   f"{res['Win']:+.5f}",      False),
+        ('W₃₄  (adiab.)',   f"{res['Wout']:+.5f}",     False),
+        ('W_tot',            f"{res['W']:+.5f}",        True),
     ]
-    trs = ''.join(
-        f'<tr style="background:rgba(255,255,255,{0.04 if i % 2 else 0})">'
-        f'<td style="padding:3px 10px;color:#ccc">{k}</td>'
-        f'<td style="padding:3px 10px;font-family:monospace;color:#eee">{v}</td></tr>'
-        for i, (k, v) in enumerate(linhas)
-    )
-    return (
-        f'<div style="border:1px solid #444;border-radius:6px;overflow:hidden;'
-        f'min-width:255px;font-size:12.5px;background:#0d1117">'
-        f'<div style="background:{bg};color:{fg};padding:5px 11px;font-weight:bold">'
-        f'{titulo} &nbsp;'
-        f'<span style="padding:2px 8px;border-radius:4px;border:1px solid {fg}">'
-        f'{res["modo"]}</span></div>'
-        f'<table style="width:100%;border-collapse:collapse">{trs}</table></div>'
-    )
+    rows = [
+        html.Tr([
+            html.Td(k, style={'padding': '3px 10px', 'color': '#ccc'}),
+            html.Td(html.B(v) if bold else v,
+                    style={'padding': '3px 10px', 'fontFamily': 'monospace', 'color': '#eee'}),
+        ], style={'background': 'rgba(255,255,255,0.04)' if i % 2 else 'transparent'})
+        for i, (k, v, bold) in enumerate(linhas)
+    ]
+    return html.Div([
+        html.Div([
+            html.Span(titulo, style={'fontWeight': 'bold'}),
+            ' ',
+            html.Span(res['modo'], style={
+                'padding': '2px 8px', 'borderRadius': '4px',
+                'border': f'1px solid {fg}', 'marginLeft': '6px',
+            }),
+        ], style={'background': bg, 'color': fg, 'padding': '6px 12px'}),
+        html.Table(rows, style={'width': '100%', 'borderCollapse': 'collapse'}),
+    ], style={
+        'border': '1px solid #444', 'borderRadius': '6px', 'overflow': 'hidden',
+        'minWidth': '255px', 'fontSize': '12.5px', 'background': '#0d1117',
+    })
 
 
-def build_info_html(J, hi, hf, Ta, Tb):
+def build_info_components(J, hi, hf, Ta, Tb):
     def _safe(fn):
         try:
             return fn(J, hi, hf, Ta, Tb, 200)
@@ -263,34 +297,37 @@ def build_info_html(J, hi, hf, Ta, Tb):
     M1 = float(magnetizacao(J, hi, Ta)); M3 = float(magnetizacao(J, hf, Tb))
     S1 = float(entropia(J, hi, Ta));     S3 = float(entropia(J, hf, Tb))
 
-    header = (
-        f'<div style="background:#0d1117;color:#adb5bd;padding:7px 13px;'
-        f'border-radius:5px;margin-bottom:7px;font-size:12.5px">'
-        f'<b style="color:white">J={J:.2f}</b> &nbsp;|&nbsp; '
-        f'hᵢ={hi:.1f}, h_f={hf:.1f} &nbsp;|&nbsp; '
-        f'Tₐ={Ta:.2f}, T_b={Tb:.2f} &nbsp;|&nbsp; '
-        f'h_f/4={lim:.2f} → {reg} &nbsp;|&nbsp; '
-        f'η₀=1−hᵢ/h_f=<b style="color:white">{eta0:.4f}</b><br>'
-        f'<span style="font-size:11.5px">'
-        f'#1: M₁={M1:.4f}, S₁={S1:.4f} &nbsp;&nbsp;'
-        f'#3: M₃={M3:.4f}, S₃={S3:.4f} &nbsp;&nbsp;'
-        f'ΔM={M1-M3:+.4f}, ΔS={S1-S3:+.4f}'
-        f'</span></div>'
-    )
-    tables = (
-        f'<div style="display:flex;gap:14px;flex-wrap:wrap">'
-        f'{_tabela_html("Quântico (QT)", res_Q)}'
-        f'{_tabela_html("Termodinâmico", res_C)}'
-        f'</div>'
-    )
-    return header + tables
+    header = html.Div([
+        html.Span([html.B(f'J={J:.2f}', style={'color': 'white'}),
+                   f'  |  hᵢ={hi:.1f}, hf={hf:.1f}  |  Tₐ={Ta:.2f}, Tb={Tb:.2f}'
+                   f'  |  hf/4={lim:.2f} → {reg}'
+                   f'  |  η₀ = 1 − hᵢ/hf = ',
+                   html.B(f'{eta0:.4f}', style={'color': 'white'})]),
+        html.Br(),
+        html.Span(
+            f'#1: M₁={M1:.4f}, S₁={S1:.4f}    '
+            f'#3: M₃={M3:.4f}, S₃={S3:.4f}    '
+            f'ΔM={M1-M3:+.4f}, ΔS={S1-S3:+.4f}',
+            style={'fontSize': '11.5px'},
+        ),
+    ], style={
+        'background': '#0d1117', 'color': '#adb5bd', 'padding': '7px 13px',
+        'borderRadius': '5px', 'marginBottom': '7px', 'fontSize': '12.5px',
+    })
+
+    boxes = html.Div([
+        _tabela_componente('Quantum Thermodynamics', res_Q),
+        _tabela_componente('Thermodynamics', res_C),
+    ], style={'display': 'flex', 'gap': '14px', 'flexWrap': 'wrap'})
+
+    return [header, boxes]
 
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  LAYOUT
 # ═════════════════════════════════════════════════════════════════════════════
 
-_LABEL = {'color': '#adb5bd', 'fontSize': '12px', 'marginBottom': '3px', 'display': 'block'}
+_LABEL = {'color': '#adb5bd', 'fontSize': '12px', 'marginBottom': '4px', 'marginTop': '18px', 'display': 'block'}
 _CARD  = {'background': '#0d1117', 'border': '1px solid #2d2d3d',
           'borderRadius': '8px', 'padding': '14px', 'marginBottom': '10px'}
 
@@ -332,9 +369,9 @@ app.layout = html.Div(
                                       'marginBottom': '8px', 'fontSize': '13px'}),
                         html.Label('J  (acoplamento spin-spin)', style=_LABEL),
                         _slider('J', 0.0, 3.0, 0.01, 0.51),
-                        html.Label('hᵢ  (campo inicial)', style={**_LABEL, 'marginTop': '12px'}),
+                        html.Label('hᵢ  (campo inicial)', style={**_LABEL, 'marginTop': '20px'}),
                         _slider('hi', 0.1, 5.0, 0.1, 1.0),
-                        html.Label('h_f  (campo final)', style={**_LABEL, 'marginTop': '12px'}),
+                        html.Label('h_f  (campo final)', style={**_LABEL, 'marginTop': '20px'}),
                         _slider('hf', 0.2, 5.0, 0.1, 2.0),
                     ]),
 
@@ -349,7 +386,7 @@ app.layout = html.Div(
                                  5:   {'label': '5',    'style': {'color': '#777'}},
                                  10:  {'label': '10',   'style': {'color': '#777'}},
                                  20:  {'label': '20',   'style': {'color': '#777'}}}),
-                        html.Label('T_b  (banho quente)', style={**_LABEL, 'marginTop': '12px'}),
+                        html.Label('T_b  (banho quente)', style={**_LABEL, 'marginTop': '20px'}),
                         _slider('Tb', 0.05, 10.0, 0.05, 1.0,
                                 {0.05: {'label': '0.05', 'style': {'color': '#777'}},
                                  2.5:  {'label': '2.5',  'style': {'color': '#777'}},
@@ -368,14 +405,14 @@ app.layout = html.Div(
                                  0.5:  {'label': '0.5',  'style': {'color': '#777'}},
                                  1.0:  {'label': '1',    'style': {'color': '#777'}},
                                  2.0:  {'label': '2',    'style': {'color': '#777'}}}),
-                        html.Label('T max superfície', style={**_LABEL, 'marginTop': '12px'}),
+                        html.Label('T max superfície', style={**_LABEL, 'marginTop': '20px'}),
                         _slider('Tmax', 1.0, 30.0, 0.5, 10.0,
                                 {1:  {'label': '1',  'style': {'color': '#777'}},
                                  10: {'label': '10', 'style': {'color': '#777'}},
                                  20: {'label': '20', 'style': {'color': '#777'}},
                                  30: {'label': '30', 'style': {'color': '#777'}}}),
                         html.Label('Grade N (pontos da superfície)',
-                                   style={**_LABEL, 'marginTop': '12px'}),
+                                   style={**_LABEL, 'marginTop': '20px'}),
                         _slider('Nsurf', 30, 120, 10, 60,
                                 {30: {'label': '30', 'style': {'color': '#777'}},
                                  60: {'label': '60', 'style': {'color': '#777'}},
@@ -409,12 +446,37 @@ app.layout = html.Div(
                         ),
                     ]),
 
+                    # Coluna 5: observáveis
+                    html.Div([
+                        html.P('Observáveis',
+                               style={'color': 'white', 'fontWeight': 'bold',
+                                      'marginBottom': '8px', 'fontSize': '13px'}),
+                        html.Label('Painel esquerdo', style=_LABEL),
+                        dcc.Dropdown(
+                            id='obs-left',
+                            options=OBS_OPTIONS,
+                            value='M',
+                            clearable=False,
+                            style={'background': '#1a1a2e', 'color': '#000',
+                                   'fontSize': '12px'},
+                        ),
+                        html.Label('Painel direito',
+                                   style={**_LABEL, 'marginTop': '20px'}),
+                        dcc.Dropdown(
+                            id='obs-right',
+                            options=OBS_OPTIONS,
+                            value='S',
+                            clearable=False,
+                            style={'background': '#1a1a2e', 'color': '#000',
+                                   'fontSize': '12px'},
+                        ),
+                    ]),
+
                 ]),
         ]),
 
         # ── Info panel (atualiza rápido, só física) ──────────────────────
-        dcc.Markdown(id='info-panel', dangerously_allow_html=True,
-                     style={'marginBottom': '10px'}),
+        html.Div(id='info-panel', style={'marginBottom': '10px'}),
 
         # ── Gráfico 3D ───────────────────────────────────────────────────
         dcc.Loading(
@@ -449,7 +511,7 @@ _PHYS = [Input('J','value'), Input('hi','value'), Input('hf','value'),
 
 @app.callback(Output('info-panel', 'children'), _PHYS)
 def cb_info(J, hi, hf, Ta, Tb):
-    return build_info_html(
+    return build_info_components(
         J or 0.51, hi or 1.0, hf or 2.0, Ta or 2.0, Tb or 1.0,
     )
 
@@ -460,9 +522,10 @@ def cb_info(J, hi, hf, Ta, Tb):
         Input('Tmin', 'value'), Input('Tmax', 'value'),
         Input('Nsurf', 'value'), Input('arrow', 'value'),
         Input('ciclos', 'value'),
+        Input('obs-left', 'value'), Input('obs-right', 'value'),
     ],
 )
-def cb_graph(J, hi, hf, Ta, Tb, Tmin, Tmax, N, arrow, ciclos):
+def cb_graph(J, hi, hf, Ta, Tb, Tmin, Tmax, N, arrow, ciclos, obs_left, obs_right):
     ciclos = ciclos or []
     return build_figure(
         J     or 0.51,
@@ -476,6 +539,8 @@ def cb_graph(J, hi, hf, Ta, Tb, Tmin, Tmax, N, arrow, ciclos):
         arrow or 0.12,
         'thermo' in ciclos,
         'qt'     in ciclos,
+        obs_left  or 'M',
+        obs_right or 'S',
     )
 
 

@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from dash import Dash, dcc, html, Input, Output, State, no_update
 import plotly.graph_objects as go
 import plotly.colors as pc
+from plotly.subplots import make_subplots
 from joblib import Parallel, delayed
 
 from thermodynamics_functions import (
@@ -35,6 +36,7 @@ from thermodynamics_functions import (
     ciclo_classico, ciclo_quantico,
     ciclo_Q, ciclo_Q_quantum, ciclo_Q_quantum_termico,
     eficiencia_classica, eficiencia_quantica,
+    energias_por_nivel_classico, energias_por_nivel_quantico,
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -667,6 +669,95 @@ def fig_ciclos(J, hi, hf, Tc, Th):
     return fig_Qxh("M", J, hi, hf, Tc, Th)
 
 
+def fig_niveis(J, hi, hf, Tc, Th):
+    """Trajetória de energia por nível — Fig 2 de Otto_Niveis_Manifold.ipynb.
+
+    2 linhas × 3 colunas: (Clássico | Quântico) × (E=+2h | E=−2h | E=−8J)
+    Cada subplot: barras por processo (W12, Q23, W34, Q41).
+    Verde = absorção (+), Vermelho = emissão (−).
+    """
+    _NIVEIS    = ['+2h', '-2h', '-8J']
+    _PROCS     = ['W12', 'Q23', 'W34', 'Q41']
+    _PLABELS   = ['W₁₂', 'Q₂₃', 'W₃₄', 'Q₄₁']
+    _NLB       = {'+2h': 'E = +2h', '-2h': 'E = −2h', '-8J': 'E = −8J'}
+
+    try:
+        ec = energias_por_nivel_classico(J, hi, hf, Tc, Th)
+        eq = energias_por_nivel_quantico(J, hi, hf, Tc, Th)
+    except Exception as e:
+        fig = go.Figure()
+        fig.add_annotation(text=f"Erro: {e}", showarrow=False,
+                           font_size=14, font_color="tomato")
+        fig.update_layout(template="plotly_dark", height=520)
+        return fig
+
+    # Títulos dos subplots: trabalho e calor líquidos por nível
+    subtitles = []
+    for modelo, data in [('Clássico', ec), ('Quântico', eq)]:
+        for nivel in _NIVEIS:
+            W = data['W12'][nivel] + data['W34'][nivel]
+            Q = data['Q23'][nivel] + data['Q41'][nivel]
+            subtitles.append(f'{modelo} — {_NLB[nivel]}   W={W:+.3f}  Q={Q:+.3f}')
+
+    fig = make_subplots(
+        rows=2, cols=3,
+        subplot_titles=subtitles,
+        vertical_spacing=0.22,
+        horizontal_spacing=0.09,
+    )
+
+    for row, (modelo, data) in enumerate([('Clássico', ec), ('Quântico', eq)], start=1):
+        for col, nivel in enumerate(_NIVEIS, start=1):
+            vals = [data[p][nivel] for p in _PROCS]
+            bar_colors = ['#2ca02c' if v >= 0 else '#d62728' for v in vals]
+
+            fig.add_trace(go.Bar(
+                x=_PLABELS,
+                y=vals,
+                marker_color=bar_colors,
+                marker_line_color='rgba(255,255,255,0.12)',
+                marker_line_width=0.6,
+                opacity=0.88,
+                text=[f'{v:+.3f}' for v in vals],
+                textposition='auto',
+                textfont=dict(size=9, color='rgba(255,255,255,0.9)'),
+                showlegend=False,
+                hovertemplate='%{x}: %{y:+.5f}<extra></extra>',
+            ), row=row, col=col)
+
+            fig.add_hline(y=0, line_color='rgba(200,200,200,0.35)',
+                          line_width=0.9, row=row, col=col)
+
+            # Eixo y com padding de 30% acima/abaixo para o texto não colidir
+            # com os títulos dos subplots
+            y_abs = max(abs(v) for v in vals) if vals else 1.0
+            pad   = y_abs * 0.30
+            fig.update_yaxes(
+                range=[min(min(vals), 0) - pad, max(max(vals), 0) + pad],
+                row=row, col=col,
+            )
+
+    fig.update_layout(
+        title=dict(
+            text=(f'Energia trocada por nível de autovalor<br>'
+                  f'<sup>J={J:.2f}  hᵢ={hi}  h_f={hf}  '
+                  f'Tc={Tc:.3f}  Th={Th:.3f}</sup>'),
+            font_size=13,
+        ),
+        template='plotly_dark',
+        height=580,
+        showlegend=False,
+        margin=dict(l=40, r=20, t=100, b=50),
+    )
+
+    # Cor uniforme nos títulos dos subplots
+    for ann in fig.layout.annotations:
+        ann.font.size = 11
+        ann.font.color = '#cdd6f4'
+
+    return fig
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  COLORSCALE DISCRETA + LEGEND PROXIES
 # ══════════════════════════════════════════════════════════════════════════════
@@ -880,7 +971,7 @@ app.layout = html.Div(
                                                             background=ACC,
                                                             border=f"1px solid {ACC}",
                                                             fontWeight="700"))
-                                for o in OBS_LIST + ["Eff", "Ciclos"]
+                                for o in OBS_LIST + ["Eff", "Ciclos", "Níveis"]
                             ],
                         ),
                         html.Div(id="view-radio-box",
@@ -1089,7 +1180,7 @@ def cb_show_mf(tcth_json, key_json):
     Input("mf-tabs",         "value"),
 )
 def cb_radio_opts(obs):
-    if obs in ("Eff", "Ciclos"):
+    if obs in ("Eff", "Ciclos", "Níveis"):
         return [], "QxT", dict(display="none", margin="10px 0 6px")
     opts = [{"label": f"  {obs}×T",         "value": "QxT"},
             {"label": f"  {obs}×h",         "value": "Qxh"},
@@ -1111,6 +1202,7 @@ def cb_mf_fig(obs, view, mfp):
     Tc, Th    = mfp["Tc"], mfp["Th"]
     if obs == "Eff":    return fig_eff(J, hi, hf, Tc, Th)
     if obs == "Ciclos": return fig_ciclos(J, hi, hf, Tc, Th)
+    if obs == "Níveis": return fig_niveis(J, hi, hf, Tc, Th)
     if   view == "QxT":   return fig_QxT(obs, J, hi, hf, Tc, Th)
     elif view == "Qxh":   return fig_Qxh(obs, J, hi, hf, Tc, Th)
     else:                  return fig_Qxhxt(obs, J, hi, hf, Tc, Th)
